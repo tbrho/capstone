@@ -1,20 +1,22 @@
 import os
+import re
 from google.cloud import speech
 from google.cloud import storage
+from io import BytesIO
 
 # 1. 인증 설정
 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = r"C:\Users\LG\Desktop\2025\구글 클라우드\turnkey-channel-454904-b0-33a5c7635740.json"
-
 
 # 2. 클라이언트 생성
 speech_client = speech.SpeechClient()
 storage_client = storage.Client()
 
 # 3. 음성 파일 로드
-with open('C:/Users/LG/Desktop/2025/구글 클라우드/sample.wav', 'rb') as audio_file:
-    content = audio_file.read()
+audio_path = 'C:/Users/LG/Desktop/2025/구글 클라우드/sample.wav'
+with open(audio_path, 'rb') as audio_file:
+    audio_content = audio_file.read()
 
-audio = speech.RecognitionAudio(content=content)
+audio = speech.RecognitionAudio(content=audio_content)
 
 config = speech.RecognitionConfig(
     encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
@@ -32,17 +34,29 @@ for result in response.results:
 
 print("Transcript:\n", transcript_text)
 
-# 6. 텍스트 파일로 저장 (선택적으로 로컬에도 저장 가능)
-with open("transcript.txt", "w", encoding="utf-8") as f:
-    f.write(transcript_text)
+# 6. 텍스트를 GCS-safe 파일명으로 변환
+def sanitize_filename(text):
+    text = text.strip()
+    text = re.sub(r'[\\/*?:"<>|#\n\r]', "_", text)  # 금지 문자 제거
+    text = text[:100]  # 길이 제한
+    return text if text else "empty_result"
 
-# 7. Google Cloud Storage에 업로드
-bucket_name = "a_sample"  # ← 너의 GCS 버킷 이름으로 바꿔줘!
-destination_blob_name = "sample_transcript.txt"
+safe_filename = sanitize_filename(transcript_text)
 
+# 7. Google Cloud Storage 업로드
+bucket_name = "a_sample"
 bucket = storage_client.bucket(bucket_name)
-blob = bucket.blob(destination_blob_name)
 
-blob.upload_from_filename("transcript.txt")
+# ① 텍스트 파일 업로드
+text_blob = bucket.blob(f"{safe_filename}.txt")
+text_stream = BytesIO(transcript_text.encode("utf-8"))
+text_blob.upload_from_file(text_stream, content_type="text/plain")
 
-print(f"✅ 변환된 텍스트가 GCS에 저장되었습니다: gs://{bucket_name}/{destination_blob_name}")
+# ② 음성 파일 업로드
+audio_blob = bucket.blob(f"{safe_filename}.wav")
+audio_stream = BytesIO(audio_content)
+audio_blob.upload_from_file(audio_stream, content_type="audio/wav")
+
+print(f"✅ GCS에 다음 파일들이 저장되었습니다:")
+print(f" - 텍스트: gs://{bucket_name}/{safe_filename}.txt")
+print(f" - 음성: gs://{bucket_name}/{safe_filename}.wav")
