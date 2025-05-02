@@ -1,0 +1,105 @@
+import os
+import uuid
+import wave
+import pyaudio
+from gtts import gTTS
+from google.cloud import storage
+import pygame
+import re
+
+# ————— 환경 설정 —————   
+# 파일 위치 수정 필요
+os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "/home/pi/your_key.json"
+BUCKET_NAME = "a_sample"
+
+# 녹음 설정
+CHUNK = 1024
+FORMAT = pyaudio.paInt16
+CHANNELS = 1
+RATE = 16000
+RECORD_SECONDS = 10
+
+# ————— 파일명 안전 처리 함수 —————
+def sanitize(text: str) -> str:
+    """파일명으로 안전하게 사용할 수 있도록 변환 (<> 제외)"""
+    text = text.strip()
+    # 허용되지 않는 문자: \ / * ? : " < > | 
+    text = re.sub(r'[\\/*?:"<>|]', "_", text)
+    return text or "untitled"
+
+# ————— GCS 업로드 함수 —————
+def upload_to_gcs(local_path: str, blob_name: str):
+    client = storage.Client()
+    bucket = client.bucket(BUCKET_NAME)
+    blob = bucket.blob(blob_name)
+    blob.upload_from_filename(local_path)
+    print(f"✅ GCS 업로드: gs://{BUCKET_NAME}/{blob_name}")
+
+# ————— TTS 생성·재생·업로드 —————
+def tts_and_play(text: str, safe: str):
+    # TTS 파일명
+    tts_filename = f"EX_{safe}.mp3"
+    local_tts = os.path.join("/home/pi", tts_filename)
+
+    # 1) TTS 변환
+    tts = gTTS(text=text, lang='ko')
+    tts.save(local_tts)
+    print(f"🔊 TTS 저장: {local_tts}")
+
+    # 2) GCS 업로드
+    upload_to_gcs(local_tts, tts_filename)
+
+    # 3) 스피커 재생
+    pygame.mixer.init()
+    pygame.mixer.music.load(local_tts)
+    pygame.mixer.music.play()
+    while pygame.mixer.music.get_busy():
+        pass
+    pygame.mixer.quit()
+    print("🔈 재생 완료")
+
+# ————— 녹음·저장·업로드 —————
+def record_and_upload(safe: str):
+    rec_filename = f"{safe}.wav"
+    local_rec = os.path.join("/home/pi", rec_filename)
+
+    p = pyaudio.PyAudio()
+    stream = p.open(format=FORMAT,
+                    channels=CHANNELS,
+                    rate=RATE,
+                    input=True,
+                    frames_per_buffer=CHUNK)
+    print(f"🎙️ {RECORD_SECONDS}초간 녹음 시작...")
+    frames = [stream.read(CHUNK) for _ in range(int(RATE/CHUNK*RECORD_SECONDS))]
+    print("⏹ 녹음 완료")
+
+    stream.stop_stream()
+    stream.close()
+    p.terminate()
+
+    # WAV로 저장
+    with wave.open(local_rec, 'wb') as wf:
+        wf.setnchannels(CHANNELS)
+        wf.setsampwidth(p.get_sample_size(FORMAT))
+        wf.setframerate(RATE)
+        wf.writeframes(b''.join(frames))
+    print(f"💾 녹음 파일 저장: {local_rec}")
+
+    # GCS 업로드
+    upload_to_gcs(local_rec, rec_filename)
+
+# ————— 메인 —————
+if __name__ == "__main__":
+    try:
+        raw_text = input("▶ TTS로 변환할 텍스트를 입력하세요: ").strip()
+        if not raw_text:
+            print("❗ 텍스트가 비어 있습니다. 종료합니다.")
+            exit(0)
+
+        safe_text = sanitize(raw_text)
+        tts_and_play(raw_text, safe_text)
+        record_and_upload(safe_text)
+
+        print("✅ 모든 작업 완료.")
+    except KeyboardInterrupt:
+        print("\n프로그램이 중단되었습니다.")
