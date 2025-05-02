@@ -1,63 +1,51 @@
-import os
-from google.cloud import speech
 from gtts import gTTS
+from google.cloud import storage
+import os
+import uuid
 import pygame
-import time
-from pydub import AudioSegment
-import serial  # 아두이노와 통신을 위한 시리얼 모듈 추가
 
-os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = r"C:\Users\LG\Desktop\2025\구글 클라우드\turnkey-channel-454904-b0-33a5c7635740.json"
+# 수정필요
+os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "/home/pi/your_key.json"
+BUCKET_NAME = "a_sample"
 
-def connect_jdy62(port="COM5", baudrate=9600):
-    """JDY-62 블루투스 모듈과 연결"""
-    try:
-        ser = serial.Serial(port, baudrate, timeout=1)
-        print("JDY-62 블루투스 모듈과 연결되었습니다.")
-        return ser
-    except Exception as e:
-        print(f"JDY-62 연결 오류: {e}")
-        return None
+# GCS 업로드 함수
+def upload_to_gcs(local_file_path, bucket_name, destination_blob_name):
+    storage_client = storage.Client()
+    bucket = storage_client.bucket(bucket_name)
+    blob = bucket.blob(destination_blob_name)
+    blob.upload_from_filename(local_file_path)
+    print(f"GCS에 업로드 완료: gs://{bucket_name}/{destination_blob_name}")
+    return f"gs://{bucket_name}/{destination_blob_name}"
 
-def send_audio_to_jdy62(serial_conn, file_path):
-    """JDY-62 블루투스 모듈을 통해 오디오 데이터 전송"""
-    if serial_conn:
-        try:
-            with open(file_path, 'rb') as f:
-                data = f.read()
-                serial_conn.write(data)
-                print("JDY-62를 통해 블루투스 스피커로 전송 완료.")
-        except Exception as e:
-            print(f"JDY-62 데이터 전송 오류: {e}")
+# TTS + 재생 + 업로드 함수
+def handle_tts_and_play(text):
+    safe_text = text.replace(" ", "_")
+    filename = f"EX_{safe_text}_{uuid.uuid4().hex[:6]}.mp3"
+    local_path = os.path.join("/home/pi", filename)
 
-def text_to_speech(text, lang='ko', save_dir='C:/Users/LG/Desktop/2025/구글 클라우드', filename='output.mp3', jdy62_port=None):
-    # 절대경로 설정
-    mp3_filename = os.path.join(save_dir, filename)
-    
-    # 텍스트를 MP3 파일로 변환
-    tts = gTTS(text=text, lang=lang)
-    tts.save(mp3_filename)
-    
-    print(f"음성 파일이 {mp3_filename} 로 저장되었습니다.")
-    
-    # JDY-62 블루투스 모듈을 통해 전송
-    if jdy62_port:
-        serial_conn = connect_jdy62(jdy62_port)
-        if serial_conn:
-            send_audio_to_jdy62(serial_conn, mp3_filename)
-            serial_conn.close()
-    else:
-        # pygame을 사용하여 음성 출력
-        pygame.mixer.init()
-        pygame.mixer.music.load(mp3_filename)
-        pygame.mixer.music.play()
-        
-        # 음성이 끝날 때까지 대기
-        while pygame.mixer.music.get_busy():
-            time.sleep(0.1)
-    
-    return mp3_filename
+    # TTS 변환
+    tts = gTTS(text=text, lang='ko')
+    tts.save(local_path)
+    print(f"TTS 파일 저장: {local_path}")
+
+    # GCS 업로드
+    upload_to_gcs(local_path, BUCKET_NAME, filename)
+
+    # 스피커로 재생
+    pygame.mixer.init()
+    pygame.mixer.music.load(local_path)
+    pygame.mixer.music.play()
+    while pygame.mixer.music.get_busy():
+        continue
+
+    print("재생 완료")
 
 if __name__ == "__main__":
-    text = input("앵무새에게 들려줄 문장을 입력하세요: ")
-    jdy62_port = "COM5"  # JDY-62 블루투스 모듈이 연결된 포트 설정
-    text_to_speech(text, jdy62_port=jdy62_port)
+    try:
+        text = input("TTS로 변환할 텍스트를 입력하세요: ").strip()
+        if text:
+            handle_tts_and_play(text)
+        else:
+            print("입력된 텍스트가 없습니다.")
+    except KeyboardInterrupt:
+        print("\n프로그램 종료됨.")
