@@ -12,7 +12,7 @@ speech_client = speech.SpeechClient()
 storage_client = storage.Client()
 
 # 3. 음성 파일 로드
-audio_path = 'C:/Users/LG/Desktop/2025/구글 클라우드/sample.wav'
+audio_path = 'C:/Users/LG/Desktop/2025/구글 클라우드/앵무새 음성파일/안녕하세요2.wav'
 with open(audio_path, 'rb') as audio_file:
     audio_content = audio_file.read()
 
@@ -20,7 +20,6 @@ audio = speech.RecognitionAudio(content=audio_content)
 
 config = speech.RecognitionConfig(
     encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
-    sample_rate_hertz=24000,
     language_code="ko-KR"
 )
 
