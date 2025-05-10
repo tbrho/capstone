@@ -12,6 +12,11 @@ from gtts import gTTS
 from playsound import playsound
 from google.cloud import storage
 from sklearn.preprocessing import LabelEncoder
+import requests  # Flask 서버로 데이터 전송을 위한 requests 라이브러리 추가
+from flask import Flask, request, jsonify
+
+# Flask 서버 설정
+app = Flask(__name__)
 
 # 환경설정
 openai.api_key = 'YOUR_GPT_API_KEY'
@@ -37,45 +42,7 @@ model = tf.keras.models.load_model("parrot_speech_model.h5")
 label_encoder = LabelEncoder()
 label_encoder.classes_ = np.load("label_classes.npy")  # 미리 저장된 클래스
 
-# (1) 사용자 입력 텍스트
-input_text = "안녕"
-
-# (2) TTS 변환 및 재생
-tts = gTTS(text=input_text, lang='ko')
-tts.save(tts_path)
-playsound(tts_path)
-
-# (3) 앵무새 대기 시간
-print(f"⏳ 앵무새가 따라 말할 시간 대기 중... ({WAIT_SECONDS}초)")
-time.sleep(WAIT_SECONDS)
-
-# (4) 마이크 녹음 시작
-p = pyaudio.PyAudio()
-stream = p.open(format=FORMAT, channels=CHANNELS, rate=RATE, input=True, frames_per_buffer=CHUNK)
-print("🎙️ 앵무새 발성 녹음 중...")
-frames = [stream.read(CHUNK) for _ in range(0, int(RATE / CHUNK * RECORD_SECONDS))]
-print("✅ 녹음 완료")
-stream.stop_stream()
-stream.close()
-p.terminate()
-
-# (5) WAV 저장
-with wave.open(audio_path, 'wb') as wf:
-    wf.setnchannels(CHANNELS)
-    wf.setsampwidth(p.get_sample_size(FORMAT))
-    wf.setframerate(RATE)
-    wf.writeframes(b''.join(frames))
-
-# (6) GCS 업로드
-def sanitize_filename(text):
-    return re.sub(r'[\\/*?:"<>|\n\r ]', "_", text.strip())[:50] or "untitled"
-
-safe_name = sanitize_filename(input_text)
-blob_audio = bucket.blob(f"{safe_name}.wav")
-blob_audio.upload_from_filename(audio_path)
-print(f"✅ 녹음된 음성 저장: gs://{bucket_name}/{safe_name}.wav")
-
-# (7) 음성 특징 추출
+# 음성 특징 추출
 def extract_features(audio_file, target_length=130):
     y, sr = librosa.load(audio_file, sr=None)
     mel_spec = librosa.feature.melspectrogram(y=y, sr=sr, n_mels=128)
@@ -83,18 +50,7 @@ def extract_features(audio_file, target_length=130):
     mel_spec_db = librosa.power_to_db(mel_spec, ref=np.max)
     return mel_spec_db[..., np.newaxis][np.newaxis, ...]
 
-features = extract_features(audio_path)
-
-# (8) 예측 및 정확도
-prediction = model.predict(features)
-predicted_index = np.argmax(prediction)
-predicted_word = label_encoder.inverse_transform([predicted_index])[0]
-confidence = float(np.max(prediction))
-
-print(f"\n🔍 예측 단어: {predicted_word}")
-print(f"📊 정확도: {confidence:.2%}")
-
-# (9) GPT 피드백
+# GPT 피드백 생성
 def get_feedback(word, accuracy):
     percent = int(accuracy * 100)
     prompt = (
@@ -105,14 +61,91 @@ def get_feedback(word, accuracy):
 
     response = openai.ChatCompletion.create(
         model="gpt-4",
-        messages=[
-            {"role": "system", "content": "친절한 피드백을 주는 조교"},
-            {"role": "user", "content": prompt}
-        ],
+        messages=[{"role": "system", "content": "친절한 피드백을 주는 조교"},
+                  {"role": "user", "content": prompt}],
         max_tokens=60,
         temperature=0.7,
     )
     return response['choices'][0]['message']['content'].strip()
 
-feedback = get_feedback(predicted_word, confidence)
-print(f"\n💬 GPT 피드백: {feedback}")
+# Flask 서버로 데이터 전송
+def send_to_flask_server(predicted_word, confidence, feedback):
+    flask_url = 'http://127.0.0.1:5000/receive_data'  # Flask 서버 URL
+    data = {
+        'predicted_word': predicted_word,
+        'accuracy': confidence,
+        'feedback': feedback
+    }
+
+    try:
+        # Flask 서버로 POST 요청 전송
+        response = requests.post(flask_url, json=data)
+        if response.status_code == 200:
+            print("✅ Flask 서버로 데이터 전송 성공")
+        else:
+            print(f"❌ Flask 서버 전송 실패, 상태 코드: {response.status_code}")
+    except Exception as e:
+        print(f"❌ Flask 서버 전송 중 오류 발생: {e}")
+
+# Flask 서버의 /receive_data 엔드포인트
+@app.route('/receive_data', methods=['POST'])
+def receive_data():
+    data = request.get_json()  # JSON 데이터 받기
+    predicted_word = data.get('predicted_word')
+    accuracy = data.get('accuracy')
+    feedback = data.get('feedback')
+
+    # 받은 데이터 처리
+    print(f"Predicted Word: {predicted_word}")
+    print(f"Accuracy: {accuracy}")
+    print(f"Feedback: {feedback}")
+
+    return jsonify({"message": "Data received successfully!"}), 200
+
+# 앵무새 발음 예측 및 피드백 처리
+def process_parrot_speech(input_text="안녕"):
+    # TTS 변환 및 재생
+    tts = gTTS(text=input_text, lang='ko')
+    tts.save(tts_path)
+    playsound(tts_path)
+
+    # 앵무새 대기 시간
+    print(f"⏳ 앵무새가 따라 말할 시간 대기 중... ({WAIT_SECONDS}초)")
+    time.sleep(WAIT_SECONDS)
+
+    # 마이크 녹음 시작
+    p = pyaudio.PyAudio()
+    stream = p.open(format=FORMAT, channels=CHANNELS, rate=RATE, input=True, frames_per_buffer=CHUNK)
+    print("🎙️ 앵무새 발성 녹음 중...")
+    frames = [stream.read(CHUNK) for _ in range(0, int(RATE / CHUNK * RECORD_SECONDS))]
+    print("✅ 녹음 완료")
+    stream.stop_stream()
+    stream.close()
+    p.terminate()
+
+    # WAV 저장
+    with wave.open(audio_path, 'wb') as wf:
+        wf.setnchannels(CHANNELS)
+        wf.setsampwidth(p.get_sample_size(FORMAT))
+        wf.setframerate(RATE)
+        wf.writeframes(b''.join(frames))
+
+    # 음성 특징 추출
+    features = extract_features(audio_path)
+
+    # 예측 및 정확도
+    prediction = model.predict(features)
+    predicted_index = np.argmax(prediction)
+    predicted_word = label_encoder.inverse_transform([predicted_index])[0]
+    confidence = float(np.max(prediction))
+
+    # GPT 피드백
+    feedback = get_feedback(predicted_word, confidence)
+
+    # 데이터 서버로 전송
+    send_to_flask_server(predicted_word, confidence, feedback)
+
+# Flask 서버 실행
+if __name__ == '__main__':
+    process_parrot_speech()  # 앵무새 발음 처리
+    app.run(debug=True)  # Flask 서버 실행
