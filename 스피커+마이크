@@ -9,7 +9,7 @@ import re
 
 # ————— 환경 설정 —————   
 # 파일 위치 수정 필요
-os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "/home/pi/your_key.json"
+os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "turnkey-channel-454904-b0-33a5c7635740.json"
 BUCKET_NAME = "a_sample"
 
 # 녹음 설정
