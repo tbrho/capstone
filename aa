@@ -4,7 +4,6 @@ import wave
 import pyaudio
 from gtts import gTTS
 import pygame
-import pyaudio
 import re
 from flask import Flask, jsonify
 from google.cloud import storage
