@@ -39,8 +39,7 @@ def upload_to_gcs(local_path: str, blob_name: str):
 def tts_and_play(text: str, safe: str):
     # TTS 파일명
     tts_filename = f"EX_{safe}.mp3"
-    local_tts = os.path.join("/home/pi", tts_filename)
-
+    local_tts = os.path.join(os.path.expanduser("~"), tts_filename)
     # 1) TTS 변환
     tts = gTTS(text=text, lang='ko')
     tts.save(local_tts)
@@ -61,8 +60,7 @@ def tts_and_play(text: str, safe: str):
 # ————— 녹음·저장·업로드 —————
 def record_and_upload(safe: str):
     rec_filename = f"{safe}.wav"
-    local_rec = os.path.join("/home/pi", rec_filename)
-
+    local_rec = os.path.join(os.path.expanduser("~"), rec_filename)
     p = pyaudio.PyAudio()
     stream = p.open(format=FORMAT,
                     channels=CHANNELS,
